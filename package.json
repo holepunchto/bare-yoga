@@ -1,0 +1,37 @@
+{
+  "name": "bare-yoga",
+  "version": "0.0.0",
+  "description": "Yoga bindings for Bare",
+  "exports": {
+    "./package": "./package.json",
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "binding.c",
+    "binding.js",
+    "CMakeLists.txt",
+    "lib",
+    "prebuilds"
+  ],
+  "addon": true,
+  "scripts": {
+    "format": "prettier --write . && lunte --fix",
+    "lint": "prettier --check . && lunte",
+    "test": "brittle-bare --coverage test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/holepunchto/bare-yoga.git"
+  },
+  "author": "Holepunch",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "brittle": "^3.18.0",
+    "cmake-bare": "^1.6.5",
+    "cmake-fetch": "^1.0.0",
+    "lunte": "^1.8.0",
+    "prettier": "^3.4.1",
+    "prettier-config-holepunch": "^2.0.0"
+  }
+}
