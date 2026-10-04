@@ -395,6 +395,48 @@ BARE_YOGA_QUERY(is_dirty, bool, js_get_boolean, YGNodeIsDirty(node))
 BARE_YOGA_QUERY(has_new_layout, bool, js_get_boolean, YGNodeGetHasNewLayout(node))
 BARE_YOGA_QUERY(had_overflow, bool, js_get_boolean, YGNodeLayoutGetHadOverflow(node))
 BARE_YOGA_QUERY(layout_direction, int32_t, js_create_int32, YGNodeLayoutGetDirection(node))
+BARE_YOGA_QUERY(layout_right, double, js_create_double, YGNodeLayoutGetRight(node))
+BARE_YOGA_QUERY(layout_bottom, double, js_create_double, YGNodeLayoutGetBottom(node))
+
+#define BARE_YOGA_EDGE_QUERY(name, fn) \
+  static js_value_t * \
+  bare_yoga_node_##name(js_env_t *env, js_callback_info_t *info) { \
+    int err; \
+\
+    size_t argc = 2; \
+    js_value_t *argv[2]; \
+\
+    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    assert(err == 0); \
+\
+    assert(argc == 2); \
+\
+    uint32_t tag; \
+    if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL; \
+\
+    int32_t edge; \
+    if (!bare_yoga__read_int32(env, argv[1], "edge", &edge)) return NULL; \
+\
+    /* Yoga aborts when asked for a shorthand edge. */ \
+    if (edge < YGEdgeLeft || edge > YGEdgeEnd) { \
+      err = js_throw_range_error(env, NULL, "Expected a single edge"); \
+      assert(err == 0); \
+\
+      return NULL; \
+    } \
+\
+    YGNodeRef node = bare_yoga__node(tag); \
+\
+    js_value_t *result; \
+    err = js_create_double(env, node == NULL ? 0 : fn(node, (YGEdge) edge), &result); \
+    assert(err == 0); \
+\
+    return result; \
+  }
+
+BARE_YOGA_EDGE_QUERY(layout_margin, YGNodeLayoutGetMargin)
+BARE_YOGA_EDGE_QUERY(layout_border, YGNodeLayoutGetBorder)
+BARE_YOGA_EDGE_QUERY(layout_padding, YGNodeLayoutGetPadding)
 
 #define BARE_YOGA_ACTION(name, body) \
   static js_value_t * \

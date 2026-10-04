@@ -70,6 +70,58 @@ test('margin, padding and border', (t) => {
   for (const node of [child, root]) node.destroy()
 })
 
+test('resolved edges', (t) => {
+  const root = new Node()
+  root.width = 200
+  root.height = 100
+  root.setPadding(EDGE.HORIZONTAL, 10)
+  root.setBorder(EDGE.ALL, 5)
+
+  const child = new Node()
+  child.setMargin(EDGE.ALL, 4)
+
+  root.insertChild(child)
+  root.calculateLayout(200, 100)
+
+  t.is(root.layoutPadding(EDGE.LEFT), 10)
+  t.is(root.layoutPadding(EDGE.TOP), 0)
+  t.is(root.layoutBorder(EDGE.BOTTOM), 5)
+  t.is(child.layoutMargin(EDGE.RIGHT), 4)
+
+  t.exception.all(
+    () => root.layoutPadding(EDGE.ALL),
+    /single edge/,
+    'a shorthand has no resolved value'
+  )
+
+  for (const node of [child, root]) node.destroy()
+})
+
+test('trailing position along a reversed axis', (t) => {
+  for (const [direction, read] of [
+    [FLEX_DIRECTION.ROW_REVERSE, (node) => node.layoutRight],
+    [FLEX_DIRECTION.COLUMN_REVERSE, (node) => node.layoutBottom]
+  ]) {
+    const root = new Node()
+    root.width = 200
+    root.height = 100
+    root.flexDirection = direction
+    root.setPadding(EDGE.ALL, 10)
+
+    const child = new Node()
+    child.width = 50
+    child.height = 20
+    child.setMargin(EDGE.ALL, 4)
+
+    root.insertChild(child)
+    root.calculateLayout(200, 100)
+
+    t.is(read(child), 14, 'padding plus margin')
+
+    for (const node of [child, root]) node.destroy()
+  }
+})
+
 test('justify and align', (t) => {
   const root = new Node()
   root.width = 100
