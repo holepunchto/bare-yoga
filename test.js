@@ -539,6 +539,52 @@ test('measure can be read back and cleared', (t) => {
   node.destroy()
 })
 
+test('a node lays out with the config it is given', (t) => {
+  const points = new Config({ pointScaleFactor: 1 })
+  const pixels = new Config({ pointScaleFactor: 2 })
+
+  const root = new Node({ config: points })
+  root.width = 100
+  root.height = 100
+
+  const child = new Node({ config: points })
+  child.flexGrow = 1
+  child.setMargin(EDGE.LEFT, 0.5)
+
+  root.insertChild(child)
+  root.calculateLayout(100, 100)
+
+  t.is(child.layout.left % 1, 0, 'rounded to whole points')
+
+  root.setConfig(pixels)
+  child.setConfig(pixels)
+  root.calculateLayout(100, 100)
+
+  t.is(child.layout.left, 0.5, 'rounded to half points')
+
+  pixels.pointScaleFactor = 1
+  root.calculateLayout(100, 100)
+
+  t.is(child.layout.left % 1, 0, 'rounded again when the config changes')
+
+  for (const node of [child, root]) node.destroy()
+
+  points.destroy()
+  pixels.destroy()
+})
+
+test('a node cannot change whether it uses web defaults', (t) => {
+  const web = new Config({ useWebDefaults: true })
+
+  const node = new Node()
+
+  t.exception(() => node.setConfig(web), /web defaults/)
+
+  node.destroy()
+
+  web.destroy()
+})
+
 test('config options', (t) => {
   const config = new Config({
     pointScaleFactor: 2,

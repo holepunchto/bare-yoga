@@ -55,6 +55,7 @@ bare_yoga_exports(js_env_t *env, js_value_t *exports) {
 
   V("nodeInit", bare_yoga_node_init)
   V("nodeDestroy", bare_yoga_node_destroy)
+  V("nodeSetConfig", bare_yoga_node_set_config)
   V("nodeMeasure", bare_yoga_node_measure)
   V("nodeSetChildren", bare_yoga_node_set_children)
   V("nodeChildCount", bare_yoga_node_child_count)
