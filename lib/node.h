@@ -261,6 +261,37 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
 BARE_YOGA_TREE_2(remove_child, YGNodeRemoveChild(node, child))
 
 static js_value_t *
+bare_yoga_node_set_config(js_env_t *env, js_callback_info_t *info) {
+  int err;
+
+  size_t argc = 2;
+  js_value_t *argv[2];
+
+  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  assert(err == 0);
+
+  assert(argc == 2);
+
+  uint32_t node_tag;
+  if (!bare_yoga__read_uint32(env, argv[0], "node", &node_tag)) return NULL;
+
+  uint32_t config_tag;
+  if (!bare_yoga__read_uint32(env, argv[1], "config", &config_tag)) return NULL;
+
+  YGNodeRef node = bare_yoga__node(node_tag);
+  YGConfigRef config = bare_yoga__config(config_tag);
+
+  if (node == NULL || config == NULL) return NULL;
+
+  // Yoga aborts rather than reporting this.
+  if (!bare_yoga__check(env, YGConfigGetUseWebDefaults(config) == YGConfigGetUseWebDefaults(YGNodeGetConfig(node)), "A node cannot change whether it uses web defaults")) return NULL;
+
+  YGNodeSetConfig(node, config);
+
+  return NULL;
+}
+
+static js_value_t *
 bare_yoga_node_insert_child(js_env_t *env, js_callback_info_t *info) {
   int err;
 

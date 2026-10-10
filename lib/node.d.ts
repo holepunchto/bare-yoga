@@ -61,6 +61,12 @@ interface YogaNode extends Disposable {
   setBorder(edge: Edge, value: number): void
   setGap(gutter: YogaConstants.Gutter, value: Value): void
 
+  /**
+   * Lay the node out with `config` from now on, which has to outlive it. The node is laid out again
+   * if the two configs disagree on anything that affects its layout.
+   */
+  setConfig(config: YogaConfig): void
+
   /** Insert `child` at `index`, which defaults to the end. A node can only have one parent. */
   insertChild(child: YogaNode, index?: number): void
   removeChild(child: YogaNode): void
