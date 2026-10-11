@@ -72,3 +72,10 @@ bare_yoga__registry_remove(bare_yoga_registry_t *registry, uint32_t tag) {
 
   return value;
 }
+
+static inline void
+bare_yoga__registry_destroy(bare_yoga_registry_t *registry) {
+  free(registry->slots);
+
+  bare_yoga__registry_init(registry);
+}

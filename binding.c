@@ -4,14 +4,14 @@
 
 #include "lib/config.h"
 #include "lib/constants.h"
+#include "lib/instance.h"
 #include "lib/node.h"
 
 static js_value_t *
 bare_yoga_exports(js_env_t *env, js_value_t *exports) {
   int err;
 
-  bare_yoga__registry_init(&bare_yoga__nodes);
-  bare_yoga__registry_init(&bare_yoga__configs);
+  bare_yoga_instance_t *instance = bare_yoga__instance_create(env, exports);
 
 #define SIG(...) \
   &((js_callback_signature_t){ \
@@ -24,7 +24,7 @@ bare_yoga_exports(js_env_t *env, js_value_t *exports) {
 #define T(name, fn, signature, typed) \
   { \
     js_value_t *val; \
-    err = js_create_typed_function(env, name, -1, fn, signature, typed, NULL, &val); \
+    err = js_create_typed_function(env, name, -1, fn, signature, typed, instance, &val); \
     assert(err == 0); \
     err = js_set_named_property(env, exports, name, val); \
     assert(err == 0); \
@@ -33,7 +33,7 @@ bare_yoga_exports(js_env_t *env, js_value_t *exports) {
 #define V(name, fn) \
   { \
     js_value_t *val; \
-    err = js_create_function(env, name, -1, fn, NULL, &val); \
+    err = js_create_function(env, name, -1, fn, instance, &val); \
     assert(err == 0); \
     err = js_set_named_property(env, exports, name, val); \
     assert(err == 0); \

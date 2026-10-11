@@ -11,18 +11,12 @@
 
 #include "bridging.h"
 #include "config.h"
+#include "instance.h"
 #include "registry.h"
 
-static bare_yoga_registry_t bare_yoga__nodes;
-
-typedef struct {
-  js_env_t *env;
-  js_ref_t *measure;
-} bare_yoga_node_t;
-
 static inline YGNodeRef
-bare_yoga__node(uint32_t tag) {
-  return (YGNodeRef) bare_yoga__registry_get(&bare_yoga__nodes, tag);
+bare_yoga__node(bare_yoga_instance_t *instance, uint32_t tag) {
+  return (YGNodeRef) bare_yoga__registry_get(&instance->nodes, tag);
 }
 
 static bool
@@ -34,8 +28,6 @@ bare_yoga__check(js_env_t *env, bool condition, const char *message) {
 
   return false;
 }
-
-static double bare_yoga__measured[2];
 
 static YGSize
 bare_yoga__on_measure(YGNodeConstRef node, float width, YGMeasureMode width_mode, float height, YGMeasureMode height_mode) {
@@ -81,14 +73,16 @@ bare_yoga__on_measure(YGNodeConstRef node, float width, YGMeasureMode width_mode
   err = js_create_int32(env, height_mode, &argv[3]);
   assert(err == 0);
 
-  bare_yoga__measured[0] = 0;
-  bare_yoga__measured[1] = 0;
+  double *measured = data->instance->measured;
+
+  measured[0] = 0;
+  measured[1] = 0;
 
   err = js_call_function(env, receiver, fn, 4, argv, NULL);
 
   if (err == 0) {
-    size.width = (float) bare_yoga__measured[0];
-    size.height = (float) bare_yoga__measured[1];
+    size.width = (float) measured[0];
+    size.height = (float) measured[1];
   }
 
   err = js_close_handle_scope(env, scope);
@@ -101,8 +95,15 @@ static js_value_t *
 bare_yoga_measured(js_env_t *env, js_callback_info_t *info) {
   int err;
 
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, NULL, NULL, NULL, (void **) &instance);
+  assert(err == 0);
+
+  // The buffer points into the instance, so it holds on to it.
+  bare_yoga__instance_retain(instance);
+
   js_value_t *result;
-  err = js_create_external_arraybuffer(env, bare_yoga__measured, sizeof(bare_yoga__measured), NULL, NULL, &result);
+  err = js_create_external_arraybuffer(env, instance->measured, sizeof(instance->measured), bare_yoga__on_instance_release, instance, &result);
   assert(err == 0);
 
   return result;
@@ -115,7 +116,8 @@ bare_yoga_node_init(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 1;
   js_value_t *argv[1];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 1);
@@ -123,7 +125,7 @@ bare_yoga_node_init(js_env_t *env, js_callback_info_t *info) {
   uint32_t config_tag;
   if (!bare_yoga__read_uint32(env, argv[0], "config", &config_tag)) return NULL;
 
-  YGConfigRef config = bare_yoga__config(config_tag);
+  YGConfigRef config = bare_yoga__config(instance, config_tag);
 
   YGNodeRef node = config == NULL ? YGNodeNew() : YGNodeNewWithConfig(config);
 
@@ -132,11 +134,12 @@ bare_yoga_node_init(js_env_t *env, js_callback_info_t *info) {
 
   data->env = env;
   data->measure = NULL;
+  data->instance = instance;
 
   YGNodeSetContext(node, data);
 
   js_value_t *result;
-  err = js_create_uint32(env, bare_yoga__registry_insert(&bare_yoga__nodes, node), &result);
+  err = js_create_uint32(env, bare_yoga__registry_insert(&instance->nodes, node), &result);
   assert(err == 0);
 
   return result;
@@ -149,7 +152,8 @@ bare_yoga_node_destroy(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 1;
   js_value_t *argv[1];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 1);
@@ -157,7 +161,7 @@ bare_yoga_node_destroy(js_env_t *env, js_callback_info_t *info) {
   uint32_t tag;
   if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL;
 
-  YGNodeRef node = (YGNodeRef) bare_yoga__registry_remove(&bare_yoga__nodes, tag);
+  YGNodeRef node = (YGNodeRef) bare_yoga__registry_remove(&instance->nodes, tag);
 
   if (node == NULL) return NULL;
 
@@ -184,7 +188,8 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 2;
   js_value_t *argv[2];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 2);
@@ -192,7 +197,7 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
   uint32_t tag;
   if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node == NULL) return NULL;
 
@@ -231,7 +236,8 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
     size_t argc = 2; \
     js_value_t *argv[2]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 2); \
@@ -242,8 +248,8 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
     uint32_t child_tag; \
     if (!bare_yoga__read_uint32(env, argv[1], "child", &child_tag)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(parent_tag); \
-    YGNodeRef child = bare_yoga__node(child_tag); \
+    YGNodeRef node = bare_yoga__node(instance, parent_tag); \
+    YGNodeRef child = bare_yoga__node(instance, child_tag); \
 \
     if (node != NULL && child != NULL) body; \
 \
@@ -252,8 +258,9 @@ bare_yoga_node_measure(js_env_t *env, js_callback_info_t *info) {
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t parent_tag, uint32_t child_tag, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(parent_tag); \
-    YGNodeRef child = bare_yoga__node(child_tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, parent_tag); \
+    YGNodeRef child = bare_yoga__node(instance, child_tag); \
 \
     if (node != NULL && child != NULL) body; \
   }
@@ -267,7 +274,8 @@ bare_yoga_node_set_config(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 2;
   js_value_t *argv[2];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 2);
@@ -278,8 +286,8 @@ bare_yoga_node_set_config(js_env_t *env, js_callback_info_t *info) {
   uint32_t config_tag;
   if (!bare_yoga__read_uint32(env, argv[1], "config", &config_tag)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(node_tag);
-  YGConfigRef config = bare_yoga__config(config_tag);
+  YGNodeRef node = bare_yoga__node(instance, node_tag);
+  YGConfigRef config = bare_yoga__config(instance, config_tag);
 
   if (node == NULL || config == NULL) return NULL;
 
@@ -298,7 +306,8 @@ bare_yoga_node_insert_child(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 3;
   js_value_t *argv[3];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 3);
@@ -312,8 +321,8 @@ bare_yoga_node_insert_child(js_env_t *env, js_callback_info_t *info) {
   uint32_t index;
   if (!bare_yoga__read_uint32(env, argv[2], "index", &index)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(parent_tag);
-  YGNodeRef child = bare_yoga__node(child_tag);
+  YGNodeRef node = bare_yoga__node(instance, parent_tag);
+  YGNodeRef child = bare_yoga__node(instance, child_tag);
 
   if (node == NULL || child == NULL) return NULL;
 
@@ -333,7 +342,8 @@ bare_yoga_node_set_children(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 4;
   js_value_t *argv[4];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 4);
@@ -355,14 +365,14 @@ bare_yoga_node_set_children(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node == NULL) return NULL;
 
   YGNodeRef *children = count == 0 ? NULL : malloc(count * sizeof(YGNodeRef));
 
   for (uint32_t i = 0; i < count; i++) {
-    YGNodeRef child = bare_yoga__node(tags[i]);
+    YGNodeRef child = bare_yoga__node(instance, tags[i]);
 
     if (child == NULL) {
       free(children);
@@ -402,7 +412,8 @@ bare_yoga_node_set_children(js_env_t *env, js_callback_info_t *info) {
     size_t argc = 1; \
     js_value_t *argv[1]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 1); \
@@ -410,7 +421,7 @@ bare_yoga_node_set_children(js_env_t *env, js_callback_info_t *info) {
     uint32_t tag; \
     if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     type value = node == NULL ? 0 : (body); \
 \
@@ -437,7 +448,8 @@ BARE_YOGA_QUERY(layout_bottom, double, js_create_double, YGNodeLayoutGetBottom(n
     size_t argc = 2; \
     js_value_t *argv[2]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 2); \
@@ -456,7 +468,7 @@ BARE_YOGA_QUERY(layout_bottom, double, js_create_double, YGNodeLayoutGetBottom(n
       return NULL; \
     } \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     js_value_t *result; \
     err = js_create_double(env, node == NULL ? 0 : fn(node, (YGEdge) edge), &result); \
@@ -477,7 +489,8 @@ BARE_YOGA_EDGE_QUERY(layout_padding, YGNodeLayoutGetPadding)
     size_t argc = 1; \
     js_value_t *argv[1]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 1); \
@@ -485,7 +498,7 @@ BARE_YOGA_EDGE_QUERY(layout_padding, YGNodeLayoutGetPadding)
     uint32_t tag; \
     if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) body; \
 \
@@ -494,7 +507,8 @@ BARE_YOGA_EDGE_QUERY(layout_padding, YGNodeLayoutGetPadding)
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t tag, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) body; \
   }
@@ -509,7 +523,8 @@ bare_yoga_node_mark_dirty(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 1;
   js_value_t *argv[1];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 1);
@@ -517,7 +532,7 @@ bare_yoga_node_mark_dirty(js_env_t *env, js_callback_info_t *info) {
   uint32_t tag;
   if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node == NULL) return NULL;
 
@@ -535,7 +550,8 @@ bare_yoga_node_reset(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 1;
   js_value_t *argv[1];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 1);
@@ -543,7 +559,7 @@ bare_yoga_node_reset(js_env_t *env, js_callback_info_t *info) {
   uint32_t tag;
   if (!bare_yoga__read_uint32(env, argv[0], "node", &tag)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node == NULL) return NULL;
 
@@ -563,7 +579,8 @@ bare_yoga_node_reset(js_env_t *env, js_callback_info_t *info) {
     size_t argc = 2; \
     js_value_t *argv[2]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 2); \
@@ -574,7 +591,7 @@ bare_yoga_node_reset(js_env_t *env, js_callback_info_t *info) {
     int32_t value; \
     if (!bare_yoga__read_int32(env, argv[1], #name, &value)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) YGNodeStyleSet##Name(node, (Type) value); \
 \
@@ -583,7 +600,8 @@ bare_yoga_node_reset(js_env_t *env, js_callback_info_t *info) {
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t tag, int32_t value, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) YGNodeStyleSet##Name(node, (Type) value); \
   }
@@ -607,7 +625,8 @@ BARE_YOGA_STYLE_ENUM(display, Display, YGDisplay)
     size_t argc = 2; \
     js_value_t *argv[2]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 2); \
@@ -618,7 +637,7 @@ BARE_YOGA_STYLE_ENUM(display, Display, YGDisplay)
     double value; \
     if (!bare_yoga__read_double(env, argv[1], #name, &value)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) YGNodeStyleSet##Name(node, (float) value); \
 \
@@ -627,7 +646,8 @@ BARE_YOGA_STYLE_ENUM(display, Display, YGDisplay)
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t tag, double value, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) YGNodeStyleSet##Name(node, (float) value); \
   }
@@ -672,7 +692,8 @@ BARE_YOGA_STYLE_FLOAT(aspect_ratio, AspectRatio)
     size_t argc = 3; \
     js_value_t *argv[3]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 3); \
@@ -686,7 +707,7 @@ BARE_YOGA_STYLE_FLOAT(aspect_ratio, AspectRatio)
     int32_t unit; \
     if (!bare_yoga__read_int32(env, argv[2], "unit", &unit)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) APPLY(Name, node, value, unit) \
 \
@@ -695,7 +716,8 @@ BARE_YOGA_STYLE_FLOAT(aspect_ratio, AspectRatio)
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t tag, double value, int32_t unit, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) APPLY(Name, node, value, unit) \
   }
@@ -743,7 +765,8 @@ BARE_YOGA_STYLE_DIMENSION(max_height, MaxHeight, BARE_YOGA_APPLY_DIMENSION)
     size_t argc = 4; \
     js_value_t *argv[4]; \
 \
-    err = js_get_callback_info(env, info, &argc, argv, NULL, NULL); \
+    bare_yoga_instance_t *instance; \
+    err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance); \
     assert(err == 0); \
 \
     assert(argc == 4); \
@@ -760,7 +783,7 @@ BARE_YOGA_STYLE_DIMENSION(max_height, MaxHeight, BARE_YOGA_APPLY_DIMENSION)
     int32_t unit; \
     if (!bare_yoga__read_int32(env, argv[3], "unit", &unit)) return NULL; \
 \
-    YGNodeRef node = bare_yoga__node(tag); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) APPLY(Name, Type, node, edge, value, unit) \
 \
@@ -769,7 +792,8 @@ BARE_YOGA_STYLE_DIMENSION(max_height, MaxHeight, BARE_YOGA_APPLY_DIMENSION)
 \
   static void \
   bare_yoga_node_##name##_typed(js_value_t *receiver, uint32_t tag, int32_t edge, double value, int32_t unit, js_typed_callback_info_t *info) { \
-    YGNodeRef node = bare_yoga__node(tag); \
+    bare_yoga_instance_t *instance = bare_yoga__typed_instance(info); \
+    YGNodeRef node = bare_yoga__node(instance, tag); \
 \
     if (node != NULL) APPLY(Name, Type, node, edge, value, unit) \
   }
@@ -786,7 +810,8 @@ bare_yoga_node_border(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 3;
   js_value_t *argv[3];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 3);
@@ -800,7 +825,7 @@ bare_yoga_node_border(js_env_t *env, js_callback_info_t *info) {
   double value;
   if (!bare_yoga__read_double(env, argv[2], "border", &value)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) YGNodeStyleSetBorder(node, (YGEdge) edge, (float) value);
 
@@ -809,7 +834,8 @@ bare_yoga_node_border(js_env_t *env, js_callback_info_t *info) {
 
 static void
 bare_yoga_node_border_typed(js_value_t *receiver, uint32_t tag, int32_t edge, double value, js_typed_callback_info_t *info) {
-  YGNodeRef node = bare_yoga__node(tag);
+  bare_yoga_instance_t *instance = bare_yoga__typed_instance(info);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) YGNodeStyleSetBorder(node, (YGEdge) edge, (float) value);
 }
@@ -821,7 +847,8 @@ bare_yoga_node_calculate_layout(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 4;
   js_value_t *argv[4];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 4);
@@ -838,7 +865,7 @@ bare_yoga_node_calculate_layout(js_env_t *env, js_callback_info_t *info) {
   int32_t direction;
   if (!bare_yoga__read_int32(env, argv[3], "direction", &direction)) return NULL;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) YGNodeCalculateLayout(node, (float) width, (float) height, (YGDirection) direction);
 
@@ -847,7 +874,8 @@ bare_yoga_node_calculate_layout(js_env_t *env, js_callback_info_t *info) {
 
 static void
 bare_yoga_node_calculate_layout_typed(js_value_t *receiver, uint32_t tag, double width, double height, int32_t direction, js_typed_callback_info_t *info) {
-  YGNodeRef node = bare_yoga__node(tag);
+  bare_yoga_instance_t *instance = bare_yoga__typed_instance(info);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) YGNodeCalculateLayout(node, (float) width, (float) height, (YGDirection) direction);
 }
@@ -867,7 +895,8 @@ bare_yoga_node_layout(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 3;
   js_value_t *argv[3];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 3);
@@ -886,7 +915,7 @@ bare_yoga_node_layout(js_env_t *env, js_callback_info_t *info) {
     return NULL;
   }
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) bare_yoga__write_layout(node, out);
 
@@ -895,6 +924,7 @@ bare_yoga_node_layout(js_env_t *env, js_callback_info_t *info) {
 
 static void
 bare_yoga_node_layout_typed(js_value_t *receiver, uint32_t tag, js_value_t *buffer, uint32_t offset, js_typed_callback_info_t *info) {
+  bare_yoga_instance_t *instance = bare_yoga__typed_instance(info);
   int err;
 
   js_env_t *env;
@@ -904,7 +934,7 @@ bare_yoga_node_layout_typed(js_value_t *receiver, uint32_t tag, js_value_t *buff
   double *out;
   if (!bare_yoga__buffer(env, buffer, offset, 4, sizeof(double), (void **) &out)) return;
 
-  YGNodeRef node = bare_yoga__node(tag);
+  YGNodeRef node = bare_yoga__node(instance, tag);
 
   if (node != NULL) bare_yoga__write_layout(node, out);
 }
@@ -916,7 +946,8 @@ bare_yoga_node_layout_many(js_env_t *env, js_callback_info_t *info) {
   size_t argc = 5;
   js_value_t *argv[5];
 
-  err = js_get_callback_info(env, info, &argc, argv, NULL, NULL);
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, &argc, argv, NULL, (void **) &instance);
   assert(err == 0);
 
   assert(argc == 5);
@@ -947,7 +978,7 @@ bare_yoga_node_layout_many(js_env_t *env, js_callback_info_t *info) {
   }
 
   for (uint32_t i = 0; i < count; i++) {
-    YGNodeRef node = bare_yoga__node(tags[i]);
+    YGNodeRef node = bare_yoga__node(instance, tags[i]);
 
     if (node == NULL) {
       err = js_throw_type_errorf(env, NULL, "Unknown node %u", tags[i]);
@@ -968,8 +999,12 @@ static js_value_t *
 bare_yoga_node_registry_size(js_env_t *env, js_callback_info_t *info) {
   int err;
 
+  bare_yoga_instance_t *instance;
+  err = js_get_callback_info(env, info, NULL, NULL, NULL, (void **) &instance);
+  assert(err == 0);
+
   js_value_t *result;
-  err = js_create_uint32(env, bare_yoga__nodes.size, &result);
+  err = js_create_uint32(env, instance->nodes.size, &result);
   assert(err == 0);
 
   return result;
